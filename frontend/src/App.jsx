@@ -1,6 +1,6 @@
-import GraphExplorer from './pages/GraphExplorer';
+import GlobalUniverse from './pages/GlobalUniverse';
 import './styles.css';
 
 export default function App() {
-  return <GraphExplorer />;
+  return <GlobalUniverse />;
 }

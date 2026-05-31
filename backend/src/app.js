@@ -6,6 +6,7 @@ const stateRouter = require('./routes/v1/state');
 const neighborsRouter = require('./routes/v1/neighbors');
 const randomRouter = require('./routes/v1/random');
 const solveRouter = require('./routes/v1/solve');
+const universeRouter = require('./routes/v1/universe');
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use('/api/v1/state', stateRouter);
 app.use('/api/v1/neighbors', neighborsRouter);
 app.use('/api/v1/random', randomRouter);
 app.use('/api/v1/solve', solveRouter);
+app.use('/api/v1/universe', universeRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

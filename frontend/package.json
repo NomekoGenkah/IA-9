@@ -1,7 +1,7 @@
 {
   "name": "ia9-frontend",
   "version": "1.0.0",
-  "description": "Permutation graph explorer UI",
+  "description": "Permutation state-space universe (WebGL)",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "cytoscape": "^3.27.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

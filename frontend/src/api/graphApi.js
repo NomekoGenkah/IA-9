@@ -7,8 +7,5 @@ async function fetchJson(url) {
   return res.json();
 }
 
-export const getState     = (id) => fetchJson(`${BASE}/state/${id}`);
-export const getNeighbors = (id) => fetchJson(`${BASE}/neighbors/${id}`);
-export const getRandom    = ()   => fetchJson(`${BASE}/random`);
-export const getHealth    = ()   => fetchJson(`${BASE}/health`);
-export const solvePath    = (id) => fetchJson(`${BASE}/solve/${id}`);
+export const solvePath   = (id) => fetchJson(`${BASE}/solve/${id}`);
+export const getUniverse = ()   => fetchJson(`${BASE}/universe`);

@@ -1,8 +1,10 @@
-# IA-9 — Permutation Graph Explorer
+# IA-9 — Permutation State-Space Universe
 
-A fullstack web application for exploring the state-space graph of permutations of numbers 1–9.  
-Each node is a permutation (e.g. `362841957`). Edges connect states reachable by a single adjacent swap.  
-The graph is never precomputed — it expands lazily, one node at a time, driven by user interaction.
+A fullstack web application that renders the **entire** state-space of the permutations
+of 1–9 at once: all **9! = 362,880** nodes drawn as a single WebGL point field.
+Each node is a permutation (e.g. `362841957`); edges connect states reachable by a single
+adjacent swap. The layout is the Mahonian "diamond" — Y is the inversion count (distance to
+`123456789`), colour is parity (the even/odd bipartition).
 
 ---
 
@@ -19,12 +21,14 @@ docker compose up --build
 
 ## Usage
 
-1. The app loads with a single random starting node.
-2. **Click any node** to fetch and render its neighbors.
-3. Keep clicking to explore the graph progressively.
-4. Use **+ Random** to jump to a new unexplored node.
-5. Use **Fit** to re-center the view.
-6. Use **Reset** to clear and start from a new seed.
+1. The app loads the full 362,880-node map (built once in a Web Worker).
+2. **Scroll** to zoom, **drag** to pan, **double-click** a node to zoom into it.
+3. Zoom in past the threshold and each visible node's **3×3 matrix** fades in.
+4. **Click** a node to select it, then **resolver** to travel its minimum path to
+   `123456789` step by step (← / → / ▶ auto-play).
+5. Use **Ajustar** to re-fit the whole map.
+
+> The UI is in Spanish.
 
 ---
 
@@ -35,13 +39,15 @@ IA-9/
 ├── backend/
 │   ├── src/
 │   │   ├── graph/
-│   │   │   ├── permutation.js      # pure functions: validate, generate, random
+│   │   │   ├── permutation.js      # pure fns: validate, generate, rank/unrank, inversions
 │   │   │   └── graphEngine.js      # lazy graph cache (singleton)
 │   │   ├── routes/v1/
 │   │   │   ├── health.js
 │   │   │   ├── state.js
 │   │   │   ├── neighbors.js
-│   │   │   └── random.js
+│   │   │   ├── random.js
+│   │   │   ├── solve.js
+│   │   │   └── universe.js         # whole-graph metadata (no enumeration)
 │   │   ├── app.js                  # Express app + routing
 │   │   └── server.js               # HTTP server entry point
 │   ├── package.json
@@ -52,14 +58,11 @@ IA-9/
 │   │   ├── api/
 │   │   │   └── graphApi.js         # REST client (relative URLs, proxied by Vite)
 │   │   ├── graph/
-│   │   │   ├── cytoscapeConfig.js  # styles + cose layout params
-│   │   │   └── graphManager.js     # cytoscape wrapper: add/connect/layout
-│   │   ├── components/
-│   │   │   ├── GraphControls.jsx
-│   │   │   ├── NodeInfo.jsx
-│   │   │   └── StatusBar.jsx
+│   │   │   ├── permIndex.js        # rank/unrank/inversions/neighbours
+│   │   │   ├── layoutWorker.js     # builds full layout off-thread (typed arrays)
+│   │   │   └── pointField.js       # WebGL point/line renderer (one draw call)
 │   │   ├── pages/
-│   │   │   └── GraphExplorer.jsx   # main page: cytoscape lifecycle + interaction
+│   │   │   └── GlobalUniverse.jsx  # full 362,880-node WebGL map (the whole UI)
 │   │   ├── App.jsx
 │   │   ├── main.jsx
 │   │   └── styles.css
@@ -74,19 +77,51 @@ IA-9/
 
 ---
 
-## Lazy Graph Generation
+## Backend graph engine (lazy)
 
-The total graph has **9! = 362,880 nodes**. Loading it upfront would be impractical.
+The total graph has **9! = 362,880 nodes**. The backend never materializes it: it exposes
+pure indexing math (`rank`/`unrank`/`countInversions`) plus on-demand endpoints.
 
-Instead, the backend uses a **lazy expansion model**:
+- `graphEngine.js` keeps an in-memory `Map` and computes a node's neighbours only when
+  `GET /api/v1/neighbors/:id` is called (still available for ad-hoc queries / future tools).
+- `permutation.js` is the authoritative indexing source, mirrored on the frontend so both
+  sides agree on positions without shipping the graph.
 
-- `graphEngine.js` holds an in-memory `Map` of known nodes.
-- A node starts as a **stub** (known ID, no neighbors computed yet).
-- Only when `GET /api/v1/neighbors/:id` is called does the engine compute that node's neighbors (by generating all adjacent-swap permutations) and cache the result.
-- Neighbor stubs are registered as known but unexplored.
-- The frontend mirrors this: nodes appear as dashed/dim until clicked, then expand and transition to a solid explored style.
+---
 
-This means the working set in memory at any time is only the explored frontier — not the full 362,880-node graph.
+## Global Universe View
+
+The whole UI is the **Universe**: it shows **all 362,880 states at once** without breaking
+efficiency.
+
+How it stays cheap:
+
+- **No per-node objects.** Every permutation is addressed by an integer rank
+  (`0 .. 362879`). Its id is derived on demand via `unrank()`; the graph is never
+  materialized as strings or edge lists.
+- **Layout precomputed in a Web Worker.** Positions are built once into flat
+  `Float32Array`/`Uint8Array` buffers (~3 MB) and transferred to the main thread —
+  no force layout at runtime.
+- **One WebGL draw call** renders all nodes as GPU points (`frontend/src/graph/pointField.js`).
+  Pan/zoom only updates a uniform.
+- **Edges stay lazy.** The 1.45 M edges are never drawn in bulk — only the hovered
+  node's 8 neighbours and the highlighted `solve` path (constant-width quads).
+- **LOD labels.** Nodes are GL points when zoomed out; once you zoom in past a
+  threshold, the 3×3 matrices of the *visible* nodes fade in on a 2D overlay
+  (only viewport-visible nodes are enumerated, so cost stays bounded).
+  Double-click a node to jump straight to that zoom level.
+- **Journey mode.** Select a node and hit `solve` to travel its minimum path to
+  `123456789` one swap at a time: the camera flies to each node (← / → step,
+  ▶ auto-play), the travelled portion of the path lights up, and the current
+  node is framed. One layer up per step (inversions decrease monotonically).
+
+The layout is the **Mahonian diamond**: the Y axis is the inversion count (= graph
+distance to `123456789`, the `solve` target), and colour encodes parity — the
+bipartite split into 181,440 even / 181,440 odd permutations. Picking is O(1) via a
+`(layer, column) → rank` reverse index.
+
+Backend math (`rank`, `unrank`, `countInversions`, `inversionDistribution`) lives in
+`backend/src/graph/permutation.js` and is mirrored in `frontend/src/graph/permIndex.js`.
 
 ---
 
@@ -116,6 +151,8 @@ The graph is symmetric and undirected — swapping back is always a valid transi
 | GET | `/api/v1/random` | Random valid permutation |
 | GET | `/api/v1/state/:id` | Node info (explored status, neighbor count) |
 | GET | `/api/v1/neighbors/:id` | Expand node — returns all neighbors |
+| GET | `/api/v1/solve/:id` | Minimum adjacent-swap path to `123456789` |
+| GET | `/api/v1/universe` | Whole-graph metadata (total, target, inversion distribution) |
 
 All states are validated: must contain digits 1–9 each exactly once.
 
@@ -156,6 +193,6 @@ The architecture is designed to support richer transition rules without restruct
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 18, Vite 4 |
-| Graph viz | Cytoscape.js (cose layout) |
+| Graph viz | Custom WebGL renderer + Web Worker layout (no external graph lib) |
 | Backend | Node.js 20, Express 4 |
 | Containers | Docker, Docker Compose |
