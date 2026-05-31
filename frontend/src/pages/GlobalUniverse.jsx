@@ -18,8 +18,6 @@ export default function GlobalUniverse() {
   // Layout arrays from the worker (kept in refs — never re-rendered as React state).
   const layoutRef = useRef(null); // { level, levelSize, levelOffset, rankByIndex, positions, rowHeight, colSpacing }
   const renderReq = useRef(false);
-  const lastHoverRef = useRef(-1);
-  const lockedRef  = useRef(-1);   // clicked node: selection frame stays fixed here
   const animRef    = useRef(0);    // camera fly-to animation frame id
   const journeyRef = useRef(null); // ranks along the active solve path
   const pathActiveRef = useRef(false); // mirror of pathActive for event handlers
@@ -27,8 +25,7 @@ export default function GlobalUniverse() {
   const [isDark, setIsDark]   = useState(() => localStorage.getItem('ia9-theme') !== 'light');
   const [loading, setLoading] = useState(true);
   const [meta, setMeta]       = useState(null);
-  const [hover, setHover]     = useState(null);     // { rank, state, level }
-  const [selected, setSelected] = useState(null);   // { rank, state, level }
+  const [selected, setSelected] = useState(null);   // clicked node: { rank, state, level }
   const [pathActive, setPathActive] = useState(false);
   const [solving, setSolving] = useState(false);
   const [journeyStep, setJourneyStep] = useState(-1); // index along the solve path
@@ -167,8 +164,6 @@ export default function GlobalUniverse() {
     const r = j[s];
     f.setHighlight(r);
     f.setEdges(null);
-    lastHoverRef.current = r;
-    setHover(null);
     setSelected({ rank: r, state: unrank(r), level: L.level[r] });
     if (s >= 1) {
       const strip = new Float32Array((s + 1) * 2);
@@ -188,9 +183,12 @@ export default function GlobalUniverse() {
   }, [flyTo]);
 
   // ── O(1) picking: world point -> rank (or -1) ───────────────────────────────
+  // The candidate is the nearest grid cell, but it's only a hit if the click
+  // lands within ~the node's *on-screen* size — so clicking the empty gap
+  // between nodes (especially when zoomed in) selects nothing.
   const pickRank = useCallback((world) => {
-    const L = layoutRef.current;
-    if (!L) return -1;
+    const L = layoutRef.current, f = fieldRef.current;
+    if (!L || !f) return -1;
     const lvl = Math.round(MAX_LEVEL - world.y / L.rowHeight);
     if (lvl < 0 || lvl > MAX_LEVEL) return -1;
     const size = L.levelSize[lvl];
@@ -198,9 +196,11 @@ export default function GlobalUniverse() {
     const i = Math.round(world.x / L.colSpacing + (size - 1) / 2);
     if (i < 0 || i >= size) return -1;
     const r = L.rankByIndex[L.levelOffset[lvl] + i];
-    const dx = world.x - L.positions[r * 2];
-    const dy = world.y - L.positions[r * 2 + 1];
-    if (Math.abs(dx) > L.colSpacing * 0.7 || Math.abs(dy) > L.rowHeight * 0.7) return -1;
+    // Distance from the actual node, in screen pixels.
+    const dxPx = (world.x - L.positions[r * 2]) * f.scale;
+    const dyPx = (world.y - L.positions[r * 2 + 1]) * f.scale;
+    const hitPx = Math.max(4, f.pointSizeCss() * 0.5 + 3); // ~node half-size + slack
+    if (Math.abs(dxPx) > hitPx || Math.abs(dyPx) > hitPx) return -1;
     return r;
   }, []);
 
@@ -255,7 +255,7 @@ export default function GlobalUniverse() {
       field.fit();
       paintRef.current();
       setLoading(false);
-      setStatus(`${TOTAL.toLocaleString('es')} estados · 37 capas · construido en ${d.buildMs} ms. Pasa el cursor para inspeccionar, clic para seleccionar.`);
+      setStatus(`${TOTAL.toLocaleString('es')} estados · 37 capas · construido en ${d.buildMs} ms. Haz clic en un nodo para seleccionarlo.`);
       worker.terminate();
     };
     worker.postMessage('build');
@@ -278,7 +278,7 @@ export default function GlobalUniverse() {
     requestRender();
   }, [isDark, applyColors, requestRender]);
 
-  // ── Pointer interaction (pan / zoom / hover / click) ────────────────────────
+  // ── Pointer interaction (pan / zoom / click-to-select) ──────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -291,55 +291,33 @@ export default function GlobalUniverse() {
 
     const onDown = (e) => { stopFly(); dragging = true; moved = false; const p = toCss(e); lastX = p.x; lastY = p.y; };
 
+    // Pointer move only pans (while dragging). Selection is click-only — there
+    // is no hover frame, so the cursor never moves the selector.
     const onMove = (e) => {
-      const f = fieldRef.current; if (!f || !layoutRef.current) return;
+      const f = fieldRef.current; if (!f || !layoutRef.current || !dragging) return;
       const p = toCss(e);
-      if (dragging) {
-        const dx = p.x - lastX, dy = p.y - lastY;
-        if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
-        f.panBy(dx, dy); lastX = p.x; lastY = p.y;
-        requestRender();
-        return;
-      }
-      if (pathActiveRef.current) return; // journey drives selection — no hover
-      if (lockedRef.current >= 0) return; // selección fija a un nodo — ignora hover
-      const r = pickRank(f.screenToWorld(p.x, p.y));
-      if (r === lastHoverRef.current) return;
-      lastHoverRef.current = r;
-      if (r < 0) { f.setHighlight(-1); f.setEdges(null); setHover(null); }
-      else { f.setHighlight(r); f.setEdges(edgesFor(r)); setHover(nodeAt(r)); }
+      const dx = p.x - lastX, dy = p.y - lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+      f.panBy(dx, dy); lastX = p.x; lastY = p.y;
       requestRender();
     };
 
+    // A clean click (no drag) selects a node, or cancels selection on empty space.
     const onUp = (e) => {
       const f = fieldRef.current;
       if (dragging && !moved && !pathActiveRef.current && f && layoutRef.current) {
         const p = toCss(e);
         const r = pickRank(f.screenToWorld(p.x, p.y));
         if (r >= 0) {
-          // Click a node → lock the selection frame on it (hover stops moving it).
-          lockedRef.current = r;
-          lastHoverRef.current = r;
           f.setHighlight(r); f.setEdges(edgesFor(r));
-          setHover(null); setSelected(nodeAt(r));
+          setSelected(nodeAt(r));            // click a node → select it
         } else {
-          // Click empty → release; hover takes over again.
-          lockedRef.current = -1;
-          lastHoverRef.current = -1;
           f.setHighlight(-1); f.setEdges(null);
-          setHover(null); setSelected(null);
+          setSelected(null);                 // click empty → cancel selection
         }
         requestRender();
       }
       dragging = false;
-    };
-
-    const onLeave = () => {
-      const f = fieldRef.current; if (!f) return;
-      if (pathActiveRef.current) return; // keep the journey frame visible
-      if (lockedRef.current >= 0) return; // keep the locked selection frame
-      lastHoverRef.current = -1;
-      f.setHighlight(-1); f.setEdges(null); setHover(null); requestRender();
     };
 
     const onWheel = (e) => {
@@ -359,25 +337,22 @@ export default function GlobalUniverse() {
       const p = toCss(e);
       const r = pickRank(f.screenToWorld(p.x, p.y));
       if (r < 0) return;
-      lockedRef.current = r; lastHoverRef.current = r; // lock the frame here too
       f.center = { x: layoutRef.current.positions[r * 2], y: layoutRef.current.positions[r * 2 + 1] };
       f.scale = Math.max(f.scale, 60);
       f.setHighlight(r); f.setEdges(edgesFor(r));
-      setHover(null); setSelected(nodeAt(r));
+      setSelected(nodeAt(r)); // double-click also selects + frames the node
       requestRender();
     };
 
     canvas.addEventListener('pointerdown', onDown);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-    canvas.addEventListener('pointerleave', onLeave);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('dblclick', onDblClick);
     return () => {
       canvas.removeEventListener('pointerdown', onDown);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointerleave', onLeave);
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('dblclick', onDblClick);
     };
@@ -390,13 +365,10 @@ export default function GlobalUniverse() {
     const f = fieldRef.current;
     stopFly();
     journeyRef.current = null;
-    lockedRef.current = -1;
-    lastHoverRef.current = -1;
     setPlaying(false);
     setJourneyStep(-1);
     setPathActive(false);
     setSelected(null);
-    setHover(null);
     if (f) { f.setPath(null); f.setProgress(null); f.setHighlight(-1); f.setEdges(null); }
     requestRender();
   }, [stopFly, requestRender]);
@@ -451,7 +423,7 @@ export default function GlobalUniverse() {
   }, []);
 
   pathActiveRef.current = pathActive;
-  const info = hover || selected;
+  const info = selected;
   const jlen = journeyRef.current ? journeyRef.current.length : 0;
   const atStart = journeyStep <= 0;
   const atEnd = journeyStep >= jlen - 1;
@@ -492,7 +464,7 @@ export default function GlobalUniverse() {
               )}
             </div>
           ) : (
-            <span className="node-status hint">pasa el cursor por un punto para inspeccionar</span>
+            <span className="node-status hint">haz clic en un nodo para seleccionarlo</span>
           )}
         </div>
 
