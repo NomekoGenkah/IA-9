@@ -1,21 +1,29 @@
 # IA-9 — Permutation State-Space Universe
 
-A fullstack web application that renders the **entire** state-space of the permutations
-of 1–9 at once: all **9! = 362,880** nodes drawn as a single WebGL point field.
+A **fully static, frontend-only** web app that renders the **entire** state-space of the
+permutations of 1–9 at once: all **9! = 362,880** nodes drawn as a single WebGL point field.
 Each node is a permutation (e.g. `362841957`); edges connect states reachable by a single
 adjacent swap. The layout is the Mahonian "diamond" — Y is the inversion count (distance to
 `123456789`), colour is parity (the even/odd bipartition).
+
+All computation runs **in the browser** — there is no backend, no API, no server. The app
+can be served from any static host (e.g. GitHub Pages).
 
 ---
 
 ## Quick Start
 
 ```bash
-docker compose up --build
+cd frontend
+npm install
+npm run dev        # Vite dev server on http://localhost:5173
 ```
 
-- **Frontend:** http://localhost:5173  
-- **Backend API:** http://localhost:3001/api/v1/health
+Or via Docker (local dev convenience only):
+
+```bash
+docker compose up --build   # frontend on http://localhost:5173
+```
 
 ---
 
@@ -36,29 +44,14 @@ docker compose up --build
 
 ```
 IA-9/
-├── backend/
-│   ├── src/
-│   │   ├── graph/
-│   │   │   ├── permutation.js      # pure fns: validate, generate, rank/unrank, inversions
-│   │   │   └── graphEngine.js      # lazy graph cache (singleton)
-│   │   ├── routes/v1/
-│   │   │   ├── health.js
-│   │   │   ├── state.js
-│   │   │   ├── neighbors.js
-│   │   │   ├── random.js
-│   │   │   ├── solve.js
-│   │   │   └── universe.js         # whole-graph metadata (no enumeration)
-│   │   ├── app.js                  # Express app + routing
-│   │   └── server.js               # HTTP server entry point
-│   ├── package.json
-│   └── Dockerfile
-│
-├── frontend/
+├── frontend/                       # the entire app — self-contained, static
 │   ├── src/
 │   │   ├── api/
-│   │   │   └── graphApi.js         # REST client (relative URLs, proxied by Vite)
+│   │   │   └── graphApi.js         # local logic adapter (no network, async shims)
 │   │   ├── graph/
 │   │   │   ├── permIndex.js        # rank/unrank/inversions/neighbours
+│   │   │   ├── solve.js            # minimum adjacent-swap path (local)
+│   │   │   ├── universe.js         # whole-graph metadata (local, no enumeration)
 │   │   │   ├── layoutWorker.js     # builds full layout off-thread (typed arrays)
 │   │   │   └── pointField.js       # WebGL point/line renderer (one draw call)
 │   │   ├── pages/
@@ -67,25 +60,28 @@ IA-9/
 │   │   ├── main.jsx
 │   │   └── styles.css
 │   ├── index.html
-│   ├── vite.config.js
+│   ├── vite.config.js              # base: '/IA-9/' for GitHub Pages
 │   ├── package.json
 │   └── Dockerfile
 │
-├── docker-compose.yml
+├── .github/workflows/deploy.yml    # builds & deploys frontend to GitHub Pages
+├── docker-compose.yml              # local dev only (frontend service)
 └── README.md
 ```
 
 ---
 
-## Backend graph engine (lazy)
+## How it stays serverless
 
-The total graph has **9! = 362,880 nodes**. The backend never materializes it: it exposes
-pure indexing math (`rank`/`unrank`/`countInversions`) plus on-demand endpoints.
+The total graph has **9! = 362,880 nodes**, but it is never materialized. Everything is
+pure indexing math (`rank`/`unrank`/`countInversions`) that runs in the browser:
 
-- `graphEngine.js` keeps an in-memory `Map` and computes a node's neighbours only when
-  `GET /api/v1/neighbors/:id` is called (still available for ad-hoc queries / future tools).
-- `permutation.js` is the authoritative indexing source, mirrored on the frontend so both
-  sides agree on positions without shipping the graph.
+- `frontend/src/graph/permIndex.js` is the authoritative indexing source.
+- `solve.js` computes a state's minimum path locally (bubble-sort over inversions).
+- `universe.js` computes whole-graph metadata locally (Mahonian inversion distribution),
+  with no enumeration.
+- `graphApi.js` keeps the original `solvePath` / `getUniverse` signatures (now async shims
+  over local functions), so the UI code is unchanged.
 
 ---
 
@@ -120,8 +116,8 @@ distance to `123456789`, the `solve` target), and colour encodes parity — the
 bipartite split into 181,440 even / 181,440 odd permutations. Picking is O(1) via a
 `(layer, column) → rank` reverse index.
 
-Backend math (`rank`, `unrank`, `countInversions`, `inversionDistribution`) lives in
-`backend/src/graph/permutation.js` and is mirrored in `frontend/src/graph/permIndex.js`.
+The indexing math (`rank`, `unrank`, `inversions`, `inversionDistribution`) lives in
+`frontend/src/graph/` (`permIndex.js`, `universe.js`).
 
 ---
 
@@ -143,48 +139,53 @@ The graph is symmetric and undirected — swapping back is always a valid transi
 
 ---
 
-## API Reference
+## Local logic (formerly the API)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/health` | Server health + cache stats |
-| GET | `/api/v1/random` | Random valid permutation |
-| GET | `/api/v1/state/:id` | Node info (explored status, neighbor count) |
-| GET | `/api/v1/neighbors/:id` | Expand node — returns all neighbors |
-| GET | `/api/v1/solve/:id` | Minimum adjacent-swap path to `123456789` |
-| GET | `/api/v1/universe` | Whole-graph metadata (total, target, inversion distribution) |
+These were REST endpoints; they are now plain functions running in the browser.
 
-All states are validated: must contain digits 1–9 each exactly once.
+| Function | Location | Description |
+|----------|----------|-------------|
+| `solvePath(id)` | `graph/solve.js` | Minimum adjacent-swap path to `123456789` |
+| `getUniverse()` / `UNIVERSE_META` | `graph/universe.js` | Whole-graph metadata (total, target, inversion distribution) |
+| `rank` / `unrank` / `neighborRanks` | `graph/permIndex.js` | Permutation indexing and neighbours |
+
+States are validated to contain digits 1–9 each exactly once.
 
 ---
 
-## Local Development (without Docker)
+## Deployment (GitHub Pages)
 
-**Backend:**
-```bash
-cd backend
-npm install
-npm run dev       # nodemon on port 3001
-```
+`.github/workflows/deploy.yml` builds `frontend/` and publishes `frontend/dist` to Pages on
+every push to `main`. To enable: **Settings → Pages → Build and deployment → Source: GitHub
+Actions**. The site is served at `https://<user>.github.io/IA-9/`.
 
-**Frontend:**
+The Pages sub-path is set via `base: '/IA-9/'` in `vite.config.js`. If you fork/rename the
+repo, update that (or pass `VITE_BASE=/your-repo/ npm run build`).
+
+A static `npm run build` (output in `frontend/dist/`) can also be hosted on any static host
+(Netlify, Vercel, Cloudflare Pages, S3…).
+
+---
+
+## Local Development
+
 ```bash
 cd frontend
 npm install
-npm run dev       # Vite on port 5173, proxies /api → localhost:3001
+npm run dev        # Vite dev server on port 5173
+npm run build      # static production build → frontend/dist
+npm run preview    # serve the production build locally
 ```
 
 ---
 
 ## Extending the Graph
 
-The architecture is designed to support richer transition rules without restructuring:
+The architecture supports richer transition rules without restructuring:
 
-- **New transition rules:** Add a function in `permutation.js` and wire it in `graphEngine.js`.
-- **Search algorithms (BFS/DFS):** Add `services/searchService.js`; `expandNode` is the traversal primitive.
-- **Persistence:** Replace the `Map` in `graphEngine.js` with a SQLite/Redis adapter.
-- **Conditional transitions:** Add rule predicates to `generateNeighbors` or compose multiple rule sets.
-- **Inference/annotation layers:** Add a `services/inferenceService.js` that annotates nodes before returning them.
+- **New transition rules:** Add a neighbour function in `frontend/src/graph/permIndex.js`.
+- **Search algorithms (BFS/DFS):** Operate over ranks using `neighborRanks` as the primitive.
+- **Different solve strategies:** Swap out `frontend/src/graph/solve.js`.
 
 ---
 
@@ -192,7 +193,7 @@ The architecture is designed to support richer transition rules without restruct
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18, Vite 4 |
+| App | React 18, Vite 4 — static, frontend-only |
 | Graph viz | Custom WebGL renderer + Web Worker layout (no external graph lib) |
-| Backend | Node.js 20, Express 4 |
-| Containers | Docker, Docker Compose |
+| Compute | Pure in-browser permutation indexing (no backend) |
+| Hosting | Static (GitHub Pages via GitHub Actions) |

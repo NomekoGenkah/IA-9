@@ -1,11 +1,8 @@
-// All requests go through Vite's proxy (/api → backend service).
-const BASE = '/api/v1';
+// Self-contained, no backend. All computation runs locally in the browser so
+// the app can be served as a static site (e.g. GitHub Pages).
+// Kept async with the original signatures so call sites stay unchanged.
+import { solvePath as solveLocal } from '../graph/solve';
+import { UNIVERSE_META } from '../graph/universe';
 
-async function fetchJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
-  return res.json();
-}
-
-export const solvePath   = (id) => fetchJson(`${BASE}/solve/${id}`);
-export const getUniverse = ()   => fetchJson(`${BASE}/universe`);
+export const solvePath   = (id) => Promise.resolve(solveLocal(id));
+export const getUniverse = ()   => Promise.resolve(UNIVERSE_META);

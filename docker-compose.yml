@@ -1,28 +1,13 @@
 version: '3.8'
 
-services:
-  backend:
-    build: ./backend
-    container_name: ia9-backend
-    ports:
-      - "3001:3001"
-    environment:
-      - PORT=3001
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/v1/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+# Self-contained static frontend — all computation runs in the browser. This
+# compose file is only for local dev convenience; production is served as static
+# files on GitHub Pages (see .github/workflows/deploy.yml).
 
+services:
   frontend:
     build: ./frontend
     container_name: ia9-frontend
     ports:
       - "5173:5173"
-    environment:
-      # Vite proxies /api/* to this target — uses Docker service name
-      - VITE_API_TARGET=http://backend:3001
-    depends_on:
-      - backend
     restart: unless-stopped

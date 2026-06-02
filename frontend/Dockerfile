@@ -9,5 +9,4 @@ COPY . .
 
 EXPOSE 5173
 
-# VITE_API_TARGET is injected at container start by docker-compose
 CMD ["npm", "run", "dev"]

@@ -1,6 +1,5 @@
 /**
  * Permutation indexing for the global "universe" view — pure, no dependencies.
- * Mirrors backend/src/graph/permutation.js so both sides agree on rank/inversion.
  *
  * The whole point: a permutation of 1-9 is fully described by a single integer
  * (its rank, 0 .. 362879). We never store the 362,880 strings — we derive any
