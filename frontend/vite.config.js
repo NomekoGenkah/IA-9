@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 // Static, self-contained build (no backend). `base` matches the GitHub Pages
 // path: https://<user>.github.io/IA-9/ . Override with VITE_BASE if needed.
+// Deployed to GitHub Pages via .github/workflows/deploy.yml on push to main.
 export default defineConfig({
   base: process.env.VITE_BASE || '/IA-9/',
   plugins: [react()],
